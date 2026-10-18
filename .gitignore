@@ -8,6 +8,9 @@ Debug
 Release
 x64
 x86
+build
+*.exe
+*.dll
 
 # 忽略编译产生的临时文件
 .obj

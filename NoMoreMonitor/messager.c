@@ -86,7 +86,12 @@ DWORD WINAPI lililth_thread_proc(LPVOID lpParameter) {
             con_printf(L"[*]Log:%s\n", curr_pack.log_buffer);
 
             if (hwnd) {
-                SendMessage(hwnd, WM_IPC_STATE, status_log, (LPARAM)curr_pack.log_buffer);
+                /* 用带超时的同步发送，避免退出时主线程忙于清理、不再泵消息，
+                   导致此线程永久阻塞在 SendMessage 上，进而使 messager_uninit
+                   的 WaitForSingleObject 等满 3 秒再 TerminateThread（白屏/无响应）。 */
+                SendMessageTimeout(hwnd, WM_IPC_STATE, status_log,
+                                   (LPARAM)curr_pack.log_buffer,
+                                   SMTO_ABORTIFHUNG | SMTO_NORMAL, 500, NULL);
             }
             break;
         case status_info:

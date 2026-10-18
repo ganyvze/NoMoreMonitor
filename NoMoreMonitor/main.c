@@ -79,14 +79,24 @@ BOOL WINAPI console_ctrl_handler(DWORD signal) {
     switch (signal) {
     case CTRL_C_EVENT:
     case CTRL_BREAK_EVENT:
-    case CTRL_CLOSE_EVENT:   
+        /* 日志控制台里的 Ctrl+C：忽略，不退出后台监控 */
+        return TRUE;
+    case CTRL_CLOSE_EVENT:
+        /* 用户点了控制台关闭按钮：清理后真正退出进程，否则残留后台僵尸进程
+           会一直占着程序所在目录（CWD），导致整个文件夹删不掉 */
+        notice_cleanup_tray();
+        toast_sound_stop();
+        messager_uninit();
+        osd_shutdown();
+        ExitProcess(0);
+        return TRUE;
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
         notice_cleanup_tray();
         toast_sound_stop();
         messager_uninit();
         osd_shutdown();
-        return TRUE;
+        return FALSE;   /* 让系统继续注销/关机 */
     }
     return FALSE;
 }
@@ -130,9 +140,11 @@ static bool process_is_elevated(void) {
     return elevated;
 }
 
-int main() {
-    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
-    con_init();
+int main(int argc, char** argv) {
+    /* 不要占住程序所在目录（默认 CWD），否则运行期间整个文件夹无法删除/重命名。
+       配置与 DLL 路径均用 GetModuleFileNameW 的绝对路径，不依赖 CWD。 */
+    SetCurrentDirectoryW(L"C:\\");
+
     config_load(&g_config, NULL);
     {
         /* 首次运行生成一份默认配置文件，方便用户手动编辑 */
@@ -142,6 +154,13 @@ int main() {
             config_save(&g_config, NULL);
         }
     }
+    /* exe 编译为 GUI 子系统，默认不再自动弹控制台；仅当配置启用时才分配，
+       从而避免启动瞬间闪过黑框。 */
+    if (g_config.show_console) {
+        AllocConsole();
+    }
+    con_init();
+    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
     /* 控制台：标题 + 显示/隐藏 + 颜色（集中到 config_apply_console） */
     config_apply_console();
     if (g_config.show_console) {
@@ -151,21 +170,38 @@ int main() {
     /* 诊断：确认当前进程是否真的以管理员（提权）运行 */
     con_printf(L"[*]Process elevated (admin): %s\n", process_is_elevated() ? L"YES" : L"NO");
 
-    int choice = MessageBoxW(NULL, L"是否以巨幅文本+通知的形式来提示（若选否则只以通知形式）", L"Lilith is all you need", MB_YESNO | MB_ICONQUESTION);
-    if (choice == IDYES) {
-        g_use_osd = true;
-        con_printf(L"[-]%s\n", g_config.console_mode_on);
+    /* --autostart：静默启动，不弹窗询问，直接进入仅通知模式 */
+    bool autostart = false;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] && strcmp(argv[i], "--autostart") == 0) {
+            autostart = true;
+            break;
+        }
     }
-    else {
+
+    if (autostart) {
         g_use_osd = false;
         con_printf(L"[-]%s\n", g_config.console_mode_off);
     }
+    else {
+        int choice = MessageBoxW(NULL, L"是否以巨幅文本+通知的形式来提示（若选否则只以通知形式）", L"Lilith is all you need", MB_YESNO | MB_ICONQUESTION);
+        if (choice == IDYES) {
+            g_use_osd = true;
+            con_printf(L"[-]%s\n", g_config.console_mode_on);
+        }
+        else {
+            g_use_osd = false;
+            con_printf(L"[-]%s\n", g_config.console_mode_off);
+        }
+    }
     if (!messager_init()) { con_printf(L"[!]messager init failed\n"); goto MAIN_FAILED; }
     if (!notice_window_init()) { con_printf(L"[!]notice init failed\n"); messager_uninit(); goto MAIN_FAILED; }
-    /* 模式选定后立刻弹一次桌面 Toast，两种模式都要能看见 */
-    send_balloon_notification(
-        g_config.tray_tip,
-        g_use_osd ? L"巨幅文本 + 通知模式已就绪" : L"仅通知模式已就绪");
+    /* 模式选定后立刻弹一次桌面 Toast，两种模式都要能看见；静默启动不弹 */
+    if (!autostart) {
+        send_balloon_notification(
+            g_config.tray_tip,
+            g_use_osd ? L"巨幅文本 + 通知模式已就绪" : L"仅通知模式已就绪");
+    }
     while (1) {
         con_printf(L"[-]%s\n", g_config.console_waiting);
         DWORD pid = 0;
@@ -251,13 +287,11 @@ EXIT_CLEANUP:
     toast_sound_stop();
     messager_uninit();
     osd_shutdown();
-    system("pause");
     return 0;
 
 MAIN_FAILED:
     toast_sound_stop();
     messager_uninit();
     osd_shutdown();
-    system("pause");
     return -1;
 }

@@ -335,8 +335,10 @@ static void show_tray_menu(void) {
         break;
 
     case IDM_EXIT:
-        notice_cleanup_tray();
-        PostQuitMessage(0);
+        /* 销毁主窗口，让 WM_DESTROY 完成托盘/Toast 清理并 PostQuitMessage。
+           否则全屏分层 OSD 窗口会残留，主线程退出阻塞时被 DWM 判定无响应，
+           表现为整屏白屏 + “NoMoreMonitor.exe 无响应”。 */
+        DestroyWindow(hwnd);
         break;
     }
 }
@@ -393,11 +395,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_APP + 2: {
-        /* NOTIFYICON_VERSION_4：事件类型在 lParam 的 LOWORD 里，
-           HIWORD 可能是鼠标坐标，必须用 LOWORD(lParam) 判断。 */
+        /* NOTIFYICON_VERSION_4：事件类型在 lParam 的 LOWORD 里。
+           NIN_SELECT(WM_USER+0) 是鼠标悬停/单键选择，NIN_POPUPOPEN(WM_USER+6)
+           是气泡打开，二者都不是“请求弹出菜单”，之前一并触发导致悬停即弹菜单
+           且无法单击空白关闭。这里只在右键菜单(Wm_CONTEXTMENU)与键盘选中
+           (NIN_KEYSELECT)时弹出。 */
         UINT evt = LOWORD(lParam);
-        if (evt == WM_LBUTTONUP || evt == WM_RBUTTONUP ||
-            evt == WM_CONTEXTMENU || evt == NIN_SELECT || evt == NIN_POPUPMENU) {
+        if (evt == WM_CONTEXTMENU || evt == NIN_KEYSELECT) {
             show_tray_menu();
         }
         return 0;
@@ -418,6 +422,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         nid.uID = 1;
         Shell_NotifyIcon(NIM_DELETE, &nid);
         notice_cleanup_tray();
+        hwnd = NULL;   /* 窗口已销毁，置空避免后续误用悬空句柄 */
         PostQuitMessage(0);
         return 0;
     }
