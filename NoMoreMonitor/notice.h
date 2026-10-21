@@ -18,7 +18,7 @@ extern HWND hwnd;
 extern bool g_use_osd;
 
 bool notice_window_init();
-void send_balloon_notification(const wchar_t* title, const wchar_t* text);
+void send_balloon_notification(const wchar_t* title, const wchar_t* text, bool sticky);
 void notice_cleanup_tray(void);
 void notice_refresh_osd(void);   /* 立即按当前状态/配置重绘 OSD */
 

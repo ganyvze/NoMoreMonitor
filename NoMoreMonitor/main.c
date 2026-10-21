@@ -141,6 +141,9 @@ static bool process_is_elevated(void) {
 }
 
 int main(int argc, char** argv) {
+    /* 感知系统 DPI：否则高分辨率屏上会被 Windows 位图拉伸，文字呈像素风/模糊 */
+    SetProcessDPIAware();
+
     /* 不要占住程序所在目录（默认 CWD），否则运行期间整个文件夹无法删除/重命名。
        配置与 DLL 路径均用 GetModuleFileNameW 的绝对路径，不依赖 CWD。 */
     SetCurrentDirectoryW(L"C:\\");
@@ -200,7 +203,8 @@ int main(int argc, char** argv) {
     if (!autostart) {
         send_balloon_notification(
             g_config.tray_tip,
-            g_use_osd ? L"巨幅文本 + 通知模式已就绪" : L"仅通知模式已就绪");
+            g_use_osd ? L"巨幅文本 + 通知模式已就绪" : L"仅通知模式已就绪",
+            false);
     }
     while (1) {
         con_printf(L"[-]%s\n", g_config.console_waiting);

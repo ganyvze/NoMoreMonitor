@@ -38,6 +38,20 @@ static HWND g_toast_hwnd = NULL;
 static wchar_t g_toast_title[128] = { 0 };
 static wchar_t g_toast_body[256] = { 0 };
 
+/* 系统 DPI 缩放系数：高分辨率屏下不再被 Windows 位图拉伸(否则字体会变像素风)，
+   感知 DPI 后按比例放大字号与窗口尺寸，使文字清晰且大小不变。 */
+static float dpi_scale(void) {
+    static float s = -1.0f;
+    if (s < 0.0f) {
+        HDC hdc = GetDC(NULL);
+        int dpi = hdc ? GetDeviceCaps(hdc, LOGPIXELSX) : 96;
+        if (hdc) ReleaseDC(NULL, hdc);
+        if (dpi <= 0) dpi = 96;
+        s = (float)dpi / 96.0f;
+    }
+    return s;
+}
+
 /* Toast 小图缓存（预乘 BGRA） */
 static wchar_t g_toast_img_path[MAX_PATH] = { 0 };
 static unsigned char* g_toast_img_bgra = NULL;
@@ -116,11 +130,13 @@ static void toast_hide(void) {
 
 static void toast_place(void) {
     if (!g_toast_hwnd) return;
+    int tw = (int)(TOAST_W * dpi_scale() + 0.5f);
+    int th = (int)(TOAST_H * dpi_scale() + 0.5f);
     RECT wa;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    int x = wa.right - TOAST_W - 16;
-    int y = wa.bottom - TOAST_H - 16;
-    SetWindowPos(g_toast_hwnd, HWND_TOPMOST, x, y, TOAST_W, TOAST_H,
+    int x = wa.right - tw - 16;
+    int y = wa.bottom - th - 16;
+    SetWindowPos(g_toast_hwnd, HWND_TOPMOST, x, y, tw, th,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
@@ -154,6 +170,13 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         RECT rc;
         GetClientRect(h, &rc);
 
+        float s = dpi_scale();
+        int accent_w = (int)(6 * s + 0.5f);
+        int pad = (int)(12 * s + 0.5f);
+        int title_size = (int)(22 * s + 0.5f);
+        int body_size = (int)(18 * s + 0.5f);
+        int img_size = (int)(TOAST_IMG_SIZE * s + 0.5f);
+
         COLORREF bg = g_config.toast_bg_color;
         COLORREF accent = g_config.toast_accent_color;
 
@@ -161,36 +184,35 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         FillRect(hdc, &rc, bgbrush);
         DeleteObject(bgbrush);
 
-        RECT accent_rc = { 0, 0, 6, rc.bottom };
+        RECT accent_rc = { 0, 0, accent_w, rc.bottom };
         HBRUSH ab = CreateSolidBrush(accent);
         FillRect(hdc, &accent_rc, ab);
         DeleteObject(ab);
 
-        int text_left = 18;
+        int text_left = (int)(18 * s + 0.5f);
         if (g_config.toast_image[0]) {
-            int ih = TOAST_IMG_SIZE;
-            int iy = (rc.bottom - ih) / 2;
-            toast_img_draw(hdc, g_config.toast_image, 14, iy, ih, ih);
-            text_left = 14 + ih + 12;
+            int iy = (rc.bottom - img_size) / 2;
+            toast_img_draw(hdc, g_config.toast_image, (int)(14 * s + 0.5f), iy, img_size, img_size);
+            text_left = (int)((14 + TOAST_IMG_SIZE + 12) * s + 0.5f);
         }
 
         SetBkMode(hdc, TRANSPARENT);
 
-        HFONT title_font = CreateFontW(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        HFONT title_font = CreateFontW(title_size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
-        HFONT body_font = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        HFONT body_font = CreateFontW(body_size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
 
         HGDIOBJ old = SelectObject(hdc, title_font);
         SetTextColor(hdc, RGB(255, 255, 255));
-        RECT tr = { text_left, 12, rc.right - 12, 40 };
+        RECT tr = { text_left, pad, rc.right - pad, (int)(40 * s + 0.5f) };
         DrawTextW(hdc, g_toast_title, -1, &tr, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         SelectObject(hdc, body_font);
         SetTextColor(hdc, RGB(210, 210, 210));
-        RECT br = { text_left, 44, rc.right - 12, rc.bottom - 10 };
+        RECT br = { text_left, (int)(44 * s + 0.5f), rc.right - pad, rc.bottom - (int)(10 * s + 0.5f) };
         DrawTextW(hdc, g_toast_body, -1, &br, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
 
         SelectObject(hdc, old);
@@ -216,16 +238,18 @@ static bool toast_ensure_window(void) {
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassW(&wc);
 
+    int tw = (int)(TOAST_W * dpi_scale() + 0.5f);
+    int th = (int)(TOAST_H * dpi_scale() + 0.5f);
     g_toast_hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         TOAST_CLASS_NAME, L"",
         WS_POPUP,
-        0, 0, TOAST_W, TOAST_H,
+        0, 0, tw, th,
         NULL, NULL, instacne, NULL);
     return g_toast_hwnd != NULL;
 }
 
-static void toast_show(const wchar_t* title, const wchar_t* body) {
+static void toast_show(const wchar_t* title, const wchar_t* body, bool sticky) {
     if (!toast_ensure_window()) return;
 
     wcsncpy_s(g_toast_title, _countof(g_toast_title), title ? title : L"", _TRUNCATE);
@@ -237,7 +261,14 @@ static void toast_show(const wchar_t* title, const wchar_t* body) {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(g_toast_hwnd, NULL, TRUE);
     UpdateWindow(g_toast_hwnd);
-    SetTimer(g_toast_hwnd, TOAST_TIMER_ID, TOAST_SHOW_MS, NULL);
+
+    if (sticky) {
+        /* 常驻：监控进行中不自动关闭，并取消之前遗留的自动关闭计时器 */
+        KillTimer(g_toast_hwnd, TOAST_TIMER_ID);
+    }
+    else {
+        SetTimer(g_toast_hwnd, TOAST_TIMER_ID, TOAST_SHOW_MS, NULL);
+    }
 }
 
 /* 托盘右键菜单项(固定文字，不进配置) */
@@ -270,9 +301,9 @@ void notice_refresh_osd(void) {
     notice_render();
 }
 
-void send_balloon_notification(const wchar_t* title, const wchar_t* text) {
+void send_balloon_notification(const wchar_t* title, const wchar_t* text, bool sticky) {
     /* 桌面 Toast：不依赖系统通知中心/专注助手，一定能看见 */
-    toast_show(title, text);
+    toast_show(title, text, sticky);
 
     /* 提示音：自定义音频或系统默认 */
     toast_sound_play(g_config.toast_sound);
@@ -361,16 +392,16 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 g_fading = false;
                 g_text_alpha = 1.0f;
                 KillTimer(hwnd, FADE_TIMER_ID);
-                send_balloon_notification(g_config.start_title, g_config.start_body);
+                send_balloon_notification(g_config.start_title, g_config.start_body, false);
             }
             else if (current_ui_state == status_watching) {
                 g_fading = false;
                 g_text_alpha = 1.0f;
                 KillTimer(hwnd, FADE_TIMER_ID);
-                send_balloon_notification(g_config.watching_title, g_config.watching_body);
+                send_balloon_notification(g_config.watching_title, g_config.watching_body, true);
             }
             else if (current_ui_state == status_stop) {
-                send_balloon_notification(g_config.stop_title, g_config.stop_body);
+                send_balloon_notification(g_config.stop_title, g_config.stop_body, false);
                 g_fading = true;
                 g_text_alpha = 1.0f;
                 SetTimer(hwnd, FADE_TIMER_ID, 30, NULL);

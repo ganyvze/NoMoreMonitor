@@ -12,6 +12,19 @@ using namespace Gdiplus;
 static ULONG_PTR g_gdiplusToken = 0;
 static bool g_osd_ready = false;
 
+/* 系统 DPI 缩放系数：配合进程级 DPI 感知，按比例放大字号以保持清晰与大小 */
+static float dpi_scale(void) {
+    static float s = -1.0f;
+    if (s < 0.0f) {
+        HDC hdc = GetDC(NULL);
+        int dpi = hdc ? GetDeviceCaps(hdc, LOGPIXELSX) : 96;
+        if (hdc) ReleaseDC(NULL, hdc);
+        if (dpi <= 0) dpi = 96;
+        s = (float)dpi / 96.0f;
+    }
+    return s;
+}
+
 /* OSD 图片缓存：路径/缩放不变时复用已缩放/预乘的位图，避免淡出期间反复读盘解码 */
 static wchar_t g_img_cache_path[MAX_PATH] = { 0 };
 static unsigned char* g_img_cache_bgra = NULL;   /* 预乘 BGRA */
@@ -99,6 +112,7 @@ static void draw_text_at(Graphics* g, const wchar_t* text, int w, int h,
         if (log_size > 72) log_size = 72;
         size = (REAL)log_size;
     }
+    size *= dpi_scale();
     if (letter_spacing < -20) letter_spacing = -20;
     if (letter_spacing > 80) letter_spacing = 80;
     REAL spacing = (REAL)letter_spacing;
