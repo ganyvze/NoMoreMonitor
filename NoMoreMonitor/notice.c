@@ -149,8 +149,8 @@ static RECT toast_close_rect(HWND h) {
     RECT rc;
     GetClientRect(h, &rc);
     float s = dpi_scale();
-    int size = (int)(20 * s + 0.5f);
-    int margin = (int)(8 * s + 0.5f);
+    int size = (int)(14 * s + 0.5f);
+    int margin = (int)(6 * s + 0.5f);
     RECT r;
     r.right = rc.right - margin;
     r.top = margin;
@@ -247,7 +247,7 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 
         HGDIOBJ old = SelectObject(hdc, title_font);
         SetTextColor(hdc, RGB(255, 255, 255));
-        RECT tr = { text_left, pad, rc.right - (int)(36 * s + 0.5f), (int)(40 * s + 0.5f) };
+        RECT tr = { text_left, pad, rc.right - (int)(26 * s + 0.5f), (int)(40 * s + 0.5f) };
         DrawTextW(hdc, g_toast_title, -1, &tr, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         SelectObject(hdc, body_font);
@@ -262,7 +262,7 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         /* 右上角白色关闭按钮 */
         {
             RECT cr = toast_close_rect(h);
-            HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+            HPEN pen = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
             HGDIOBJ old_pen = SelectObject(hdc, pen);
             MoveToEx(hdc, cr.left, cr.top, NULL);
             LineTo(hdc, cr.right, cr.bottom);
