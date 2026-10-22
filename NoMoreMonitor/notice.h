@@ -16,6 +16,7 @@ extern const wchar_t* notice_window_name;
 extern HWND hwnd;
 
 extern bool g_use_osd;
+extern bool g_silent;
 
 bool notice_window_init();
 void send_balloon_notification(const wchar_t* title, const wchar_t* text, bool sticky);

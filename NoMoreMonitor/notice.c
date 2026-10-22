@@ -18,6 +18,7 @@ HWND hwnd;
 int current_ui_state = status_waiting;
 
 bool g_use_osd = true;
+bool g_silent = false;   /* 静默启动(--autostart)：通知不播放提示音 */
 wchar_t g_log_text[1024] = { 0 };
 
 #define FADE_TIMER_ID 1
@@ -128,6 +129,36 @@ static void toast_hide(void) {
     ShowWindow(g_toast_hwnd, SW_HIDE);
 }
 
+/* 30 分钟静音：点 Toast 右上角 X 后，期间不再显示任何通知/文本 */
+static ULONGLONG g_mute_until = 0;
+
+static bool is_muted(void) {
+    if (g_mute_until == 0) return false;
+    if (GetTickCount64() < g_mute_until) return true;
+    g_mute_until = 0;   /* 已过期，自动解除 */
+    return false;
+}
+
+static void mute_30min(void) {
+    g_mute_until = GetTickCount64() + (ULONGLONG)30 * 60 * 1000;
+    toast_hide();
+}
+
+/* 右上角关闭按钮的命中区域（按 DPI 缩放） */
+static RECT toast_close_rect(HWND h) {
+    RECT rc;
+    GetClientRect(h, &rc);
+    float s = dpi_scale();
+    int size = (int)(20 * s + 0.5f);
+    int margin = (int)(8 * s + 0.5f);
+    RECT r;
+    r.right = rc.right - margin;
+    r.top = margin;
+    r.left = r.right - size;
+    r.bottom = r.top + size;
+    return r;
+}
+
 static void toast_place(void) {
     if (!g_toast_hwnd) return;
     int tw = (int)(TOAST_W * dpi_scale() + 0.5f);
@@ -144,7 +175,16 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_NCHITTEST:
         return HTCLIENT;
-    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDOWN: {
+        POINT pt = { (SHORT)LOWORD(lp), (SHORT)HIWORD(lp) };
+        RECT cr = toast_close_rect(h);
+        if (PtInRect(&cr, pt)) {
+            mute_30min();   /* 点右上角 X：30 分钟内不再显示任何通知/文本 */
+        } else {
+            toast_hide();
+        }
+        return 0;
+    }
     case WM_RBUTTONDOWN:
         toast_hide();
         return 0;
@@ -207,7 +247,7 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 
         HGDIOBJ old = SelectObject(hdc, title_font);
         SetTextColor(hdc, RGB(255, 255, 255));
-        RECT tr = { text_left, pad, rc.right - pad, (int)(40 * s + 0.5f) };
+        RECT tr = { text_left, pad, rc.right - (int)(36 * s + 0.5f), (int)(40 * s + 0.5f) };
         DrawTextW(hdc, g_toast_title, -1, &tr, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
         SelectObject(hdc, body_font);
@@ -218,6 +258,20 @@ static LRESULT CALLBACK toast_wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         SelectObject(hdc, old);
         DeleteObject(title_font);
         DeleteObject(body_font);
+
+        /* 右上角白色关闭按钮 */
+        {
+            RECT cr = toast_close_rect(h);
+            HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+            HGDIOBJ old_pen = SelectObject(hdc, pen);
+            MoveToEx(hdc, cr.left, cr.top, NULL);
+            LineTo(hdc, cr.right, cr.bottom);
+            MoveToEx(hdc, cr.right, cr.top, NULL);
+            LineTo(hdc, cr.left, cr.bottom);
+            SelectObject(hdc, old_pen);
+            DeleteObject(pen);
+        }
+
         EndPaint(h, &ps);
         return 0;
     }
@@ -289,8 +343,8 @@ static void toast_show(const wchar_t* title, const wchar_t* body, bool sticky) {
 
 static void notice_render(void) {
     if (!hwnd) return;
-    /* 仅通知模式：OSD 不画任何文字/图片，提示只走 Toast */
-    if (!g_use_osd) {
+    /* 仅通知模式或静音 30 分钟内：OSD 不画任何文字/图片 */
+    if (!g_use_osd || is_muted()) {
         osd_render(hwnd, status_waiting, &g_config, NULL, 0.0f);
         return;
     }
@@ -302,11 +356,14 @@ void notice_refresh_osd(void) {
 }
 
 void send_balloon_notification(const wchar_t* title, const wchar_t* text, bool sticky) {
+    /* 静音 30 分钟内：不显示任何通知与文本 */
+    if (is_muted()) return;
+
     /* 桌面 Toast：不依赖系统通知中心/专注助手，一定能看见 */
     toast_show(title, text, sticky);
 
-    /* 提示音：自定义音频或系统默认 */
-    toast_sound_play(g_config.toast_sound);
+    /* 提示音：自定义音频或系统默认；静默启动(--autostart)时不播 */
+    if (!g_silent) toast_sound_play(g_config.toast_sound);
 
     /* 同时尝试托盘气泡（Win10/11 可能进通知中心，作补充） */
     if (!hwnd) return;

@@ -184,6 +184,7 @@ int main(int argc, char** argv) {
 
     if (autostart) {
         g_use_osd = false;
+        g_silent = true;   /* 静默启动：通知不播放提示音 */
         con_printf(L"[-]%s\n", g_config.console_mode_off);
     }
     else {
